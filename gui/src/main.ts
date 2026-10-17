@@ -1,35 +1,34 @@
+import '@fortawesome/fontawesome-free/css/all.css';
 import { App, flick, Navbar, NavbarItem, NavbarList, Offcanvas, OffcanvasBody, OffcanvasBrand } from '@ratiosolver/flick';
 import './style.css'
 import { h, type VNode } from 'snabbdom';
 import { UserButton } from './components/user';
 
-flick.mount(() => OBSERVISTAApp());
-
 const landing_page = () => h('div.container.mt-5', [
   h('header.text-center.mb-5', [
-    h('h1.display-4', 'CoCo'),
-    h('p.lead.text-body-secondary', 'Combined deduCtiOn and abduCtiOn Reasoner'),
+    h('h1.display-4', 'OBSERVISTA'),
+    h('p.lead.text-body-secondary', 'Observatory of Innovative Strategies for Repurposing Terrain Vague'),
   ]),
   h('div.row.justify-content-center', [
     h('div.col-lg-8', [
-      h('p', 'CoCo is a dual-process inspired cognitive architecture built in Rust. It integrates a rule-based expert system and a timeline-based planner to invoke deductive and abductive reasoning in dynamic environments.'),
+      h('p', 'OBSERVISTA aims to innovate our approach to urban vacant spaces—commonly known as "terrain vague"—by creating a pan-European knowledge hub for innovative repurposing strategies. This digital tool provides an accessible interface to explore, query, and spatially contextualize the Action\'s ontology-based terminology.'),
       h('hr.my-4'),
       h('h4', 'Features'),
       h('ul.list-group.list-group-flush', [
-        h('li.list-group-item', [h('i.fas.fa-project-diagram.me-2.text-primary'), h('strong', 'Dual-process Reasoning'), ': Combines a forward-chaining deductive engine with abductive inference to explain observed evidence.']),
-        h('li.list-group-item', [h('i.fas.fa-database.me-2.text-primary'), h('strong', 'Dynamic Knowledge Base'), ': Classes and objects evolve at runtime. Properties update continuously and a full time-series history is retained.']),
-        h('li.list-group-item', [h('i.fas.fa-cog.me-2.text-primary'), h('strong', 'CLIPS Expert System'), ': Leverages the battle-tested CLIPS rule engine via seamless Rust bindings for expressive, pattern-based rule evaluation.']),
-        h('li.list-group-item', [h('i.fas.fa-broadcast-tower.me-2.text-primary'), h('strong', 'Real-time Notifications'), ': Clients subscribe to reasoner events over WebSocket and receive inferences as they fire.']),
+        h('li.list-group-item', [h('i.fas.fa-sitemap.me-2.text-primary'), h('strong', 'Ontology-Based Terminology'), ': Systematizes diverse definitions, interpretations, and conceptualizations of terrain vague across disciplines and cultural contexts.']),
+        h('li.list-group-item', [h('i.fas.fa-search.me-2.text-primary'), h('strong', 'Accessible Exploration'), ': Abstracts the complexity of formal semantic languages, enabling urbanists, planners, and designers to seamlessly search and compare terms.']),
+        h('li.list-group-item', [h('i.fas.fa-map-marked-alt.me-2.text-primary'), h('strong', 'Geospatial Contextualization'), ': Integrates interactive Leaflet maps to link abstract ontological concepts directly to physical locations and European case studies.']),
+        h('li.list-group-item', [h('i.fas.fa-cogs.me-2.text-primary'), h('strong', 'Semantic Reasoning Integration'), ': Powered by a high-performance Rust backend interfacing with semantic reasoners to evaluate queries and infer conceptual relationships.']),
       ]),
       h('hr.my-4'),
       h('p', [
-        'The knowledge base is organized around ', h('strong', 'classes'), ' and ', h('strong', 'objects'), '. Classes define the structure of things the reasoner knows about. They carry ', h('i', 'static properties'), ' (fixed at creation time) and ', h('i', 'dynamic properties'), ' (updated as the environment evolves), and can inherit from other classes to form a hierarchy. Objects are instances of one or more classes; their properties can be updated at any time, and a full history of their values is recorded as time-series data that can be queried over any time range.',
+        'The platform bridges the gap between theoretical research in ', h('strong', 'Applied Ontology (WG1)'), ' and empirical analysis of ', h('strong', 'Repurposing in Practice (WG2)'), '. Users can navigate hierarchies of concepts, inspect ', h('i', 'prototypical definitions'), ', and explore ', h('i', 'expected uses'), ' of terms without requiring prior expertise in formal languages or RDF/OWL structures.',
       ]),
       h('p', [
-        'Reasoning is driven by ', h('strong', 'rules'), '. Each rule encodes a piece of domain knowledge: given certain conditions on the current state of objects and their data, the reasoner fires the appropriate conclusions, either deducing new facts or hypothesising explanations for observed evidence. Rules can be added dynamically, allowing the knowledge base to grow and adapt without restarting the system.',
+        'By connecting terminology to ', h('strong', 'spatial case studies'), ', the tool supports the development of a common pan-European language around underused urban spaces, transforming fragmented disciplinary perspectives into actionable insights for climate resilience, ecological regeneration, and social inclusion.',
       ]),
-      h('p', [
-        'Clients can interact with CoCo either through its REST API or by opening a ', h('strong', 'WebSocket connection'), ' to receive real-time notifications whenever the reasoner produces new inferences.',
+      h('p.text-body-secondary.small.mt-4', [
+        'Developed within the framework of ', h('strong', 'COST Action CA24134 (VMG 03)'), ' — Observatory of Innovative Strategies for Repurposing Terrain Vague.',
       ]),
     ])
   ])
@@ -37,6 +36,8 @@ const landing_page = () => h('div.container.mt-5', [
 
 flick.ctx.current_page = landing_page;
 flick.ctx.page_title = 'Home';
+
+flick.mount(() => OBSERVISTAApp());
 
 function OBSERVISTAApp(): VNode {
   const content = h('div.flex-grow-1.d-flex.flex-column', [
@@ -46,14 +47,13 @@ function OBSERVISTAApp(): VNode {
       ]))
   ]);
 
-  return App(Navbar(OffcanvasBrand('CoCo'), [NavbarList([NavbarItem(h('i.fas.fa-home'), () => {
+  return App(Navbar(OffcanvasBrand('OBSERVISTA'), [NavbarList([NavbarItem(h('i.fas.fa-home'), () => {
     flick.ctx.current_page = landing_page;
     flick.ctx.page_title = 'Home';
     flick.redraw();
   }, false, 'Home'),
   ]), UserButton()]), content);
 }
-
 
 export async function login(username: string, password: string): Promise<void> {
   const login_res = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
