@@ -1,0 +1,149 @@
+import { h, type VNode } from "snabbdom";
+import { Dropdown, Modal } from "bootstrap";
+import { flick } from "@ratiosolver/flick";
+import { login, type User } from "../main";
+
+let username = "";
+let password = "";
+let current_user: OBSERVISTAUser | null = null;
+
+class OBSERVISTAUser {
+
+  private readonly username: string;
+  private readonly role: 'User' | 'Admin';
+
+  constructor(user: User) {
+    this.username = user.username;
+    this.role = user.role;
+  }
+
+  get_username(): string { return this.username; }
+  get_role(): 'User' | 'Admin' { return this.role; }
+}
+
+export function UserButton(): VNode {
+  let loginModal: Modal | null = null;
+  let dropdown: Dropdown | null = null;
+
+  return h('div.btn-group', [
+    h('button.btn.dropdown-toggle', {
+      attrs: { 'data-bs-toggle': 'dropdown' },
+      hook: {
+        insert: (vnode) => { dropdown = Dropdown.getOrCreateInstance(vnode.elm as Element); },
+        update: (_old, vnode) => { dropdown = Dropdown.getOrCreateInstance(vnode.elm as Element); },
+        destroy: (_vnode) => {
+          dropdown?.dispose();
+          dropdown = null;
+        }
+      },
+      on: { click: () => dropdown?.toggle() }
+    }, [h('i.fas.fa-user-circle'), ...(current_user ? [h('span.ms-1', current_user.get_username())] : [])]),
+    h('ul.dropdown-menu.dropdown-menu-end', [
+      current_user ?
+        h('li', h('button.dropdown-item', {
+          on: {
+            click: () => {
+              flick.redraw();
+            }
+          }
+        }, 'Logout')) : h('li', h('button.dropdown-item', {
+          on: {
+            click: () => {
+              loginModal!.show();
+            }
+          }
+        }, 'Login'))
+    ]),
+    h('div.modal.fade', {
+      hook: {
+        insert: (vnode) => {
+          const modalElement = vnode.elm as Element;
+          loginModal = new Modal(modalElement);
+          // Restore focus to the user button when modal is hidden
+          modalElement.addEventListener('hide.bs.modal', () => {
+            const userButton = document.querySelector('.btn-group .btn.dropdown-toggle') as HTMLButtonElement;
+            if (userButton) {
+              setTimeout(() => userButton.focus(), 0);
+            }
+          });
+        },
+        update: (_old, vnode) => { loginModal = new Modal(vnode.elm as Element); },
+        destroy: (_vnode) => {
+          loginModal?.dispose();
+          loginModal = null;
+        }
+      }
+    }, [
+      h('div.modal-dialog', [
+        h('div.modal-content', [
+          h('div.modal-header', [
+            h('h5.modal-title', 'Login'),
+            h('button.btn-close', {
+              attrs: {
+                type: 'button',
+                'data-bs-dismiss': 'modal',
+                'aria-label': 'Close'
+              }
+            })
+          ]),
+          h('div.modal-body', [
+            h('form', [
+              h('div.mb-3', [
+                h('label.form-label', {
+                  attrs: { for: 'coco-login-username' }
+                }, 'Username'),
+                h('input.form-control', {
+                  attrs: {
+                    id: 'coco-login-username',
+                    type: 'text',
+                    autocomplete: 'username'
+                  },
+                  on: {
+                    input: (event: Event) => {
+                      username = (event.target as HTMLInputElement).value;
+                    }
+                  }
+                })
+              ]),
+              h('div.mb-3', [
+                h('label.form-label', {
+                  attrs: { for: 'coco-login-password' }
+                }, 'Password'),
+                h('input.form-control', {
+                  attrs: {
+                    id: 'coco-login-password',
+                    type: 'password',
+                    autocomplete: 'current-password'
+                  },
+                  on: {
+                    input: (event: Event) => {
+                      password = (event.target as HTMLInputElement).value;
+                    }
+                  }
+                })
+              ])
+            ])
+          ]),
+          h('div.modal-footer', [
+            h('button.btn.btn-secondary', {
+              attrs: {
+                type: 'button',
+                'data-bs-dismiss': 'modal'
+              }
+            }, 'Cancel'),
+            h('button.btn.btn-primary', {
+              attrs: { type: 'button' },
+              on: {
+                click: () => {
+                  login(username, password).then(() => {
+                    loginModal!.hide();
+                    flick.redraw();
+                  }).catch((error) => alert(`Login failed: ${error}`));
+                }
+              }
+            }, 'Login')
+          ])
+        ])
+      ])])
+  ]);
+}
