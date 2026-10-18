@@ -1,5 +1,6 @@
+mod ontology;
+
 use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
-use mongodb::Client;
 use serde::Deserialize;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
@@ -8,16 +9,23 @@ use tracing_subscriber::EnvFilter;
 #[derive(Clone)]
 struct AppState {
     secret: String,
-    client: Client,
+    fuseki_url: String,
+    fuseki_client: reqwest::Client,
+    db_client: mongodb::Client,
 }
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
+
     let state = AppState {
         secret: std::env::var("SECRET").unwrap_or_else(|_| "secret".into()),
-        client: Client::with_uri_str(&std::env::var("MONGODB_URI").unwrap_or_else(|_| "mongodb://localhost:27017".into())).await.unwrap(),
+        fuseki_url: std::env::var("SPARQL_ENDPOINT").unwrap_or_else(|_| "http://localhost:3030/observista".into()),
+        fuseki_client: reqwest::Client::new(),
+        db_client: mongodb::Client::with_uri_str(&std::env::var("MONGODB_URI").unwrap_or_else(|_| "mongodb://localhost:27017".into())).await.unwrap(),
     };
+
+    ontology::seed_ontology(&state.fuseki_client, &state.fuseki_url).await;
 
     let auth_router = Router::new();
     let unauth_router = Router::new().route("/register", post(register)).route("/login", post(login)).route("/refresh_token", post(refresh_token));

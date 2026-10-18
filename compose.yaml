@@ -1,0 +1,51 @@
+services:
+  mongodb:
+    image: mongo:9.0
+    container_name: observista-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - observista-net
+
+  fuseki:
+    image: stain/jena-fuseki:latest
+    container_name: observista-fuseki
+    restart: unless-stopped
+    ports:
+      - "3030:3030"
+    environment:
+      - ADMIN_PASSWORD=${FUSEKI_PASSWORD:-admin}
+      - TDB=2
+      - FUSEKI_DATASET_1=observista
+    volumes:
+      - fuseki_data:/fuseki
+      - ./ontology:/staging:ro
+    networks:
+      - observista-net
+
+  observista-app:
+    build: .
+    container_name: observista-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - SECRET=${SECRET:-super_secret_observista_key}
+      - MONGODB_URI=mongodb://mongodb:27017
+      - SPARQL_ENDPOINT=http://fuseki:3030/observista/sparql
+      - RUST_LOG=info
+    depends_on:
+      - mongodb
+      - fuseki
+    networks:
+      - observista-net
+
+volumes:
+  mongo_data:
+  fuseki_data:
+
+networks:
+  observista-net:
+    driver: bridge
