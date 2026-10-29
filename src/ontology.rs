@@ -107,7 +107,7 @@ pub async fn get_all_terrain_vagues(http_client: &Client, fuseki_base_url: &str)
         }
     "#;
 
-    let url = format!("{}/sparql", fuseki_base_url);
+    let url = format!("{}-inf/sparql", fuseki_base_url);
     let resp = http_client.post(&url).header("Accept", "application/sparql-results+json").form(&[("query", query)]).send().await.map_err(|e| format!("SPARQL request failed: {}", e))?;
 
     if !resp.status().is_success() {

@@ -5,11 +5,16 @@
 @prefix ja:      <http://jena.hpl.hp.com/2005/11/Assembler#> .
 @prefix tdb2:    <http://jena.apache.org/2016/tdb#> .
 
-:service a fuseki:Service ;
+:service_raw a fuseki:Service ;
     fuseki:name "observista" ;
     fuseki:serviceQuery "sparql" , "query" , "" ;
     fuseki:serviceUpdate "update" , "" ;
     fuseki:serviceReadWriteGraphStore "data" ;
+    fuseki:dataset :tdb_dataset .
+
+:service_inf a fuseki:Service ;
+    fuseki:name "observista-inf" ;
+    fuseki:serviceQuery "sparql" , "query" , "" ;
     fuseki:dataset :inferred_dataset .
 
 :inferred_dataset a ja:RDFDataset ;
