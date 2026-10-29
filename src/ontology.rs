@@ -5,8 +5,6 @@ use tokio::{fs, time::sleep};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-const SCHEMA_GRAPH: &str = "http://observista.eu/graph/schema";
-const DATA_GRAPH: &str = "http://observista.eu/graph/data";
 const ONTOLOGY_NS: &str = "http://observista.eu/ontology/";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -74,13 +72,15 @@ pub async fn seed_ontology(http_client: &Client, fuseki_base_url: &str, fuseki_p
             }
             sleep(Duration::from_secs(2)).await;
         }
+    } else {
+        error!("Could not read ontology/fuseki-config.ttl");
     }
 
     if let Ok(ttl_content) = fs::read_to_string("ontology/observista.ttl").await {
-        let url = format!("{}/data?graph={}", fuseki_base_url, SCHEMA_GRAPH);
-        match http_client.put(&url).basic_auth("admin", Some(fuseki_password)).header("Content-Type", "text/turtle").body(ttl_content).send().await {
+        let url = format!("{}/data?default", fuseki_base_url);
+        match http_client.post(&url).basic_auth("admin", Some(fuseki_password)).header("Content-Type", "text/turtle").body(ttl_content).send().await {
             Ok(resp) if resp.status().is_success() => {
-                info!("Ontology seeded into Fuseki successfully");
+                info!("Ontology seeded into Fuseki default graph successfully");
             }
             Ok(resp) => warn!("Fuseki seed returned status: {}", resp.status()),
             Err(e) => error!("Failed to seed ontology: {}", e),
@@ -107,7 +107,7 @@ pub async fn get_all_terrain_vagues(http_client: &Client, fuseki_base_url: &str)
         }
     "#;
 
-    let url = format!("{}-inf/sparql", fuseki_base_url);
+    let url = format!("{}/sparql", fuseki_base_url);
     let resp = http_client.post(&url).header("Accept", "application/sparql-results+json").form(&[("query", query)]).send().await.map_err(|e| format!("SPARQL request failed: {}", e))?;
 
     if !resp.status().is_success() {
@@ -173,17 +173,14 @@ pub async fn insert_terrain_vague(http_client: &Client, fuseki_base_url: &str, f
         PREFIX geo: <http://www.opengis.net/ont/geosparql#>
 
         INSERT DATA {{
-            GRAPH <{data_graph}> {{
-                :{tv_local} a owl:NamedIndividual , :TerrainVague , geo:Feature ;
-                    :siteName "{name_esc}" ;
-                    geo:hasDefaultGeometry :{geom_local}{extra_tv_triples} .
+            :{tv_local} a owl:NamedIndividual , :TerrainVague , geo:Feature ;
+                :siteName "{name_esc}" ;
+                geo:hasDefaultGeometry :{geom_local}{extra_tv_triples} .
 
-                :{geom_local} a owl:NamedIndividual , geo:Geometry ;
-                    geo:asWKT "{wkt_esc}"^^geo:wktLiteral{extra_geom_triples} .
-            }}
+            :{geom_local} a owl:NamedIndividual , geo:Geometry ;
+                geo:asWKT "{wkt_esc}"^^geo:wktLiteral{extra_geom_triples} .
         }}
         "#,
-        data_graph = DATA_GRAPH,
         tv_local = tv_local,
         geom_local = geom_local,
         name_esc = name_esc,
