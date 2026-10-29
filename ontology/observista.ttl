@@ -1,0 +1,85 @@
+@prefix :        <http://observista.eu/ontology/> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dul:     <http://www.ontologydesignpatterns.org/ont/dul/DUL.owl#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix geo:     <http://www.opengis.net/ont/geosparql#> .
+
+#################################################################
+# Ontology declaration
+#################################################################
+
+<http://observista.eu/ontology/>
+    a owl:Ontology ;
+    rdfs:label "Observista Ontology"@en ;
+    rdfs:label "Ontologia Observista"@it ;
+    rdfs:comment "Domain ontology for Observista, grounded on DOLCE+DnS Ultralite (DUL)."@en ;
+    owl:versionInfo "0.1.0" ;
+    dcterms:creator "Observista Team" ;
+    owl:imports <http://www.ontologydesignpatterns.org/ont/dul/DUL.owl> .
+
+#################################################################
+# Classes
+#################################################################
+
+:TerrainVague
+    a owl:Class ;
+    rdfs:subClassOf dul:PhysicalPlace ,
+                    geo:Feature ;
+    rdfs:label "Terrain Vague"@en ,
+               "Terrain Vague"@it ;
+    rdfs:comment "An abandoned, unsettled, or underutilized urban space characterized by functional indeterminacy."@en ,
+                 "Uno spazio urbano abbandonato, residuale o sottoutilizzato, caratterizzato da indeterminazione funzionale."@it .
+
+:SiteTypology
+    a owl:Class ;
+    rdfs:subClassOf dul:Concept ;
+    rdfs:label "Site Typology"@en ,
+               "Tipologia del Sito"@it ;
+    rdfs:comment "Classification of the site based on its former function or spatial morphology (e.g., industrial, railway, infrastructure)."@en .
+
+:ConservationState
+    a owl:Class ;
+    rdfs:subClassOf dul:Quality ;
+    rdfs:label "Conservation State"@en ,
+               "Stato di Conservazione"@it .
+
+#################################################################
+# Object Properties
+#################################################################
+
+:hasTypology
+    a owl:ObjectProperty ;
+    rdfs:subPropertyOf dul:isClassifiedBy ;
+    rdfs:domain :TerrainVague ;
+    rdfs:range :SiteTypology ;
+    rdfs:label "has typology"@en ,
+               "ha tipologia"@it .
+
+:hasConservationState
+    a owl:ObjectProperty ;
+    rdfs:subPropertyOf dul:hasQuality ;
+    rdfs:domain :TerrainVague ;
+    rdfs:range :ConservationState ;
+    rdfs:label "has conservation state"@en ,
+               "ha stato di conservazione"@it .
+
+#################################################################
+# Datatype Properties
+#################################################################
+
+:siteName
+    a owl:DatatypeProperty ;
+    rdfs:domain :TerrainVague ;
+    rdfs:range xsd:string ;
+    rdfs:label "site name"@en ,
+               "nome del sito"@it .
+
+:siteDescription
+    a owl:DatatypeProperty ;
+    rdfs:domain :TerrainVague ;
+    rdfs:range xsd:string ;
+    rdfs:label "site description"@en ,
+               "descrizione del sito"@it .
