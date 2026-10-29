@@ -21,6 +21,7 @@ services:
     volumes:
       - fuseki_data:/fuseki
       - ./ontology:/staging:ro
+      - ./ontology/fuseki-config.ttl:/fuseki/configuration/observista.ttl:ro
     networks:
       - observista-net
 
