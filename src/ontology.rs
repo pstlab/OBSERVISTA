@@ -127,10 +127,7 @@ pub async fn get_all_terrain_vagues(http_client: &Client, fuseki_base_url: &str)
                 uri: b.remove("tv")?.value,
                 name: b.remove("name")?.value,
                 description: b.remove("description").map(|v| v.value),
-                typology: b.remove("typology").map(|v| {
-                    // Estrae il nome locale se inizia con il namespace dell'ontologia
-                    v.value.strip_prefix(ONTOLOGY_NS).unwrap_or(&v.value).to_string()
-                }),
+                typology: b.remove("typology").map(|v| v.value.strip_prefix(ONTOLOGY_NS).unwrap_or(&v.value).to_string()),
                 wkt: b.remove("wkt")?.value,
                 geojson: b.remove("geojson").map(|v| v.value),
             })
