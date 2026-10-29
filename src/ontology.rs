@@ -48,19 +48,25 @@ fn escape_sparql_literal(input: &str) -> String {
 }
 
 pub async fn seed_ontology(http_client: &Client, fuseki_base_url: &str, fuseki_password: &str) {
-    if let Ok(ttl_content) = fs::read_to_string("ontology/observista.ttl").await {
-        let url = format!("{}/data?graph={}", fuseki_base_url, SCHEMA_GRAPH);
+    let fuseki_root = fuseki_base_url.trim_end_matches('/').rsplit_once('/').map(|(root, _)| root).unwrap_or(fuseki_base_url);
+
+    if let Ok(config_ttl) = fs::read_to_string("ontology/fuseki-config.ttl").await {
+        let admin_datasets_url = format!("{}/$/datasets", fuseki_root);
 
         for attempt in 1..=10 {
-            let res = http_client.put(&url).basic_auth("admin", Some(fuseki_password)).header("Content-Type", "text/turtle").body(ttl_content.clone()).send().await;
+            let res = http_client.post(&admin_datasets_url).basic_auth("admin", Some(fuseki_password)).header("Content-Type", "text/turtle").body(config_ttl.clone()).send().await;
 
             match res {
                 Ok(resp) if resp.status().is_success() => {
-                    info!("Ontology seeded into Fuseki successfully");
-                    return;
+                    info!("Dataset 'observista' created with Reasoner on Fuseki");
+                    break;
+                }
+                Ok(resp) if resp.status().as_u16() == 409 => {
+                    info!("Dataset 'observista' already exists on Fuseki");
+                    break;
                 }
                 Ok(resp) => {
-                    warn!("Attempt {}/10: Fuseki returned status {}", attempt, resp.status());
+                    warn!("Attempt {}/10: Fuseki admin returned {}", attempt, resp.status());
                 }
                 Err(e) => {
                     warn!("Attempt {}/10: Waiting for Fuseki ({})...", attempt, e);
@@ -68,7 +74,17 @@ pub async fn seed_ontology(http_client: &Client, fuseki_base_url: &str, fuseki_p
             }
             sleep(Duration::from_secs(2)).await;
         }
-        error!("Failed to seed ontology into Fuseki after 10 attempts");
+    }
+
+    if let Ok(ttl_content) = fs::read_to_string("ontology/observista.ttl").await {
+        let url = format!("{}/data?graph={}", fuseki_base_url, SCHEMA_GRAPH);
+        match http_client.put(&url).basic_auth("admin", Some(fuseki_password)).header("Content-Type", "text/turtle").body(ttl_content).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                info!("Ontology seeded into Fuseki successfully");
+            }
+            Ok(resp) => warn!("Fuseki seed returned status: {}", resp.status()),
+            Err(e) => error!("Failed to seed ontology: {}", e),
+        }
     } else {
         error!("Could not read ontology/observista.ttl");
     }

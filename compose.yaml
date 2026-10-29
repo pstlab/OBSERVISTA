@@ -18,8 +18,6 @@ services:
       - ADMIN_PASSWORD=${FUSEKI_PASSWORD:-admin}
     volumes:
       - fuseki_data:/fuseki
-      - ./ontology:/staging:ro
-      - ./ontology/fuseki-config.ttl:/fuseki/configuration/observista.ttl:ro
     networks:
       - observista-net
 
