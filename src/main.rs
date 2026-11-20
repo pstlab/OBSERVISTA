@@ -1,12 +1,13 @@
 use crate::ontology::{CreateTerrainVagueRequest, get_all_terrain_vagues, insert_terrain_vague};
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
-    Json, Router,
-    extract::{Request, State},
+    Extension, Json, Router,
+    extract::{Path, Request, State},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use futures::TryStreamExt;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use mongodb::{IndexModel, bson::doc, options::IndexOptions};
 use reqwest::{StatusCode, header::AUTHORIZATION};
@@ -32,16 +33,31 @@ struct AppState {
     db_client: mongodb::Client,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+enum UserRole {
+    User,
+    Admin,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+enum UserStatus {
+    Pending,
+    Active,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct UserDocument {
     username: String,
     password_hash: String,
+    role: UserRole,
+    status: UserStatus,
     created_at: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Claims {
     sub: String,
+    role: UserRole,
     token_type: String,
     exp: usize,
     iat: usize,
@@ -53,6 +69,14 @@ struct AuthResponse {
     refresh_token: String,
     token_type: &'static str,
     expires_in: u64,
+}
+
+#[derive(Serialize)]
+struct UserSummary {
+    username: String,
+    role: UserRole,
+    status: UserStatus,
+    created_at: u64,
 }
 
 #[tokio::main]
@@ -71,9 +95,8 @@ async fn main() {
     ontology::seed_ontology(&state.fuseki_client, &state.fuseki_url, &state.fuseki_password).await;
 
     let api_router = Router::new().route("/api/terrain-vague", get(list_terrain_vagues));
-    let auth_router = Router::new().route("/api/terrain-vague", post(create_terrain_vague)).route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
+    let auth_router = Router::new().route("/api/terrain-vague", post(create_terrain_vague)).route("/api/users", get(list_users)).route("/api/users/{username}/approve", post(approve_user)).route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
     let unauth_router = Router::new().route("/register", post(register)).route("/login", post(login)).route("/refresh_token", post(refresh_token));
-
     let app = unauth_router.merge(auth_router).merge(api_router).with_state(state).route_service("/favicon.ico", ServeFile::new("gui/favicon.ico")).nest_service("/assets", ServeDir::new("gui/assets")).fallback_service(ServeDir::new("gui").not_found_service(ServeFile::new("gui/index.html")));
 
     let port = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(3000);
@@ -95,12 +118,13 @@ fn current_timestamp() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
-fn issue_token_pair(username: &str, secret: &str) -> Result<AuthResponse, StatusCode> {
+fn issue_token_pair(username: &str, role: &UserRole, secret: &str) -> Result<AuthResponse, StatusCode> {
     let now = current_timestamp();
     let encoding_key = EncodingKey::from_secret(secret.as_bytes()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let access_claims = Claims {
         sub: username.to_owned(),
+        role: role.clone(),
         token_type: "access".to_owned(),
         iat: now as usize,
         exp: (now + ACCESS_TOKEN_TTL_SECS) as usize,
@@ -108,6 +132,7 @@ fn issue_token_pair(username: &str, secret: &str) -> Result<AuthResponse, Status
 
     let refresh_claims = Claims {
         sub: username.to_owned(),
+        role: role.clone(),
         token_type: "refresh".to_owned(),
         iat: now as usize,
         exp: (now + REFRESH_TOKEN_TTL_SECS) as usize,
@@ -172,7 +197,7 @@ struct Credentials {
 async fn register(State(state): State<AppState>, Json(req): Json<Credentials>) -> impl IntoResponse {
     let username = req.username.trim();
     if username.len() < 3 || req.password.len() < 8 {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "Username must be >= 3 chars and password >= 8 chars" })));
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "Username must be at least 3 chars and password at least 8 chars" })));
     }
 
     let users = state.db_client.database("observista").collection::<UserDocument>("users");
@@ -188,6 +213,10 @@ async fn register(State(state): State<AppState>, Json(req): Json<Credentials>) -
         Ok(None) => {}
     }
 
+    // First user to register becomes Admin and Active, others are User and Pending
+    let is_first_user = users.count_documents(doc! {}).await.unwrap_or(1) == 0;
+    let (role, status) = if is_first_user { (UserRole::Admin, UserStatus::Active) } else { (UserRole::User, UserStatus::Pending) };
+
     let password_hash = match Argon2::default().hash_password(req.password.as_bytes()) {
         Ok(hash) => hash.to_string(),
         Err(err) => {
@@ -196,17 +225,29 @@ async fn register(State(state): State<AppState>, Json(req): Json<Credentials>) -
         }
     };
 
-    let new_user = UserDocument { username: username.to_owned(), password_hash, created_at: current_timestamp() };
+    let new_user = UserDocument {
+        username: username.to_owned(),
+        password_hash,
+        role,
+        status: status.clone(),
+        created_at: current_timestamp(),
+    };
 
     if let Err(err) = users.insert_one(new_user).await {
         error!("Failed to insert user into MongoDB: {}", err);
         return (StatusCode::CONFLICT, Json(json!({ "error": "Could not register user" })));
     }
 
-    match issue_token_pair(username, &state.secret) {
-        Ok(tokens) => (StatusCode::CREATED, Json(json!(tokens))),
-        Err(status) => (status, Json(json!({ "error": "Failed to issue tokens" }))),
-    }
+    let message = if status == UserStatus::Active { "Administrator account created. You can now log in." } else { "Registration submitted. Your account is pending administrator approval." };
+
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "username": username,
+            "status": status,
+            "message": message
+        })),
+    )
 }
 
 async fn login(State(state): State<AppState>, Json(req): Json<Credentials>) -> impl IntoResponse {
@@ -236,7 +277,7 @@ async fn login(State(state): State<AppState>, Json(req): Json<Credentials>) -> i
         return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "Invalid username or password" })));
     }
 
-    match issue_token_pair(&user.username, &state.secret) {
+    match issue_token_pair(&user.username, &user.role, &state.secret) {
         Ok(tokens) => (StatusCode::OK, Json(json!(tokens))),
         Err(status) => (status, Json(json!({ "error": "Failed to issue tokens" }))),
     }
@@ -256,19 +297,54 @@ async fn refresh_token(State(state): State<AppState>, Json(req): Json<RefreshTok
     };
 
     let users = state.db_client.database("observista").collection::<UserDocument>("users");
-    match users.find_one(doc! { "username": &claims.sub }).await {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "User no longer exists" })));
+    let user = match users.find_one(doc! { "username": &claims.sub }).await {
+        Ok(Some(u)) if u.status == UserStatus::Active => u,
+        Ok(_) => {
+            return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "User not found or inactive" })));
         }
         Err(err) => {
             error!("MongoDB error during token refresh: {}", err);
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Database error" })));
         }
-    }
+    };
 
-    match issue_token_pair(&claims.sub, &state.secret) {
+    match issue_token_pair(&user.username, &user.role, &state.secret) {
         Ok(tokens) => (StatusCode::OK, Json(json!(tokens))),
         Err(status) => (status, Json(json!({ "error": "Failed to issue tokens" }))),
+    }
+}
+
+async fn list_users(State(state): State<AppState>, Extension(claims): Extension<Claims>) -> impl IntoResponse {
+    if claims.role != UserRole::Admin {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "Admin privileges required" })));
+    }
+
+    let users = state.db_client.database("observista").collection::<UserDocument>("users");
+    match users.find(doc! {}).await {
+        Ok(cursor) => {
+            let docs: Vec<UserDocument> = cursor.try_collect().await.unwrap_or_default();
+            let list: Vec<UserSummary> = docs.into_iter().map(|u| UserSummary { username: u.username, role: u.role, status: u.status, created_at: u.created_at }).collect();
+            (StatusCode::OK, Json(json!(list)))
+        }
+        Err(err) => {
+            error!("MongoDB error listing users: {}", err);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Database error" })))
+        }
+    }
+}
+
+async fn approve_user(State(state): State<AppState>, Extension(claims): Extension<Claims>, Path(target_username): Path<String>) -> impl IntoResponse {
+    if claims.role != UserRole::Admin {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "Admin privileges required" })));
+    }
+
+    let users = state.db_client.database("observista").collection::<UserDocument>("users");
+    match users.update_one(doc! { "username": &target_username }, doc! { "$set": { "status": "Active" } }).await {
+        Ok(res) if res.matched_count > 0 => (StatusCode::OK, Json(json!({ "message": format!("User '{}' approved", target_username) }))),
+        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({ "error": "User not found" }))),
+        Err(err) => {
+            error!("MongoDB error approving user: {}", err);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Database error" })))
+        }
     }
 }

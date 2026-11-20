@@ -1,8 +1,143 @@
 import '@fortawesome/fontawesome-free/css/all.css';
 import { App, flick, Navbar, NavbarItem, NavbarList, Offcanvas, OffcanvasBody, OffcanvasBrand } from '@ratiosolver/flick';
-import './style.css'
+import './style.css';
 import { h, type VNode } from 'snabbdom';
-import { UserButton } from './components/user';
+import { UserButton, set_current_user } from './components/user';
+
+const ACCESS_TOKEN_KEY = 'observista_access_token';
+const REFRESH_TOKEN_KEY = 'observista_refresh_token';
+
+type TokenResponse = {
+  username: string;
+  role: 'User' | 'Admin';
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+};
+
+type RegisterResponse = {
+  username: string;
+  status: 'Pending' | 'Active';
+  message: string;
+};
+
+export type User = {
+  username: string;
+  role: 'User' | 'Admin';
+};
+
+function parse_user_from_token(token: string): User | null {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    if (typeof payload.sub === 'string' && (payload.role === 'User' || payload.role === 'Admin')) {
+      return { username: payload.sub, role: payload.role };
+    }
+  } catch {
+    console.error('Failed to parse user from token');
+  }
+  return null;
+}
+
+async function extract_error_message(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = await res.json();
+    if (typeof data?.error === 'string') {
+      return data.error;
+    }
+  } catch {
+    console.error('Failed to extract error message from response');
+  }
+  return `${fallback} (${res.status})`;
+}
+
+export async function login(username: string, password: string): Promise<User> {
+  const login_res = await fetch('/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+
+  if (!login_res.ok) {
+    throw new Error(await extract_error_message(login_res, 'Login failed'));
+  }
+
+  const data = (await login_res.json()) as TokenResponse;
+  if (!data.access_token || !data.refresh_token) {
+    throw new Error('Login failed: missing token in response');
+  }
+
+  localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
+  localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
+
+  return { username: data.username, role: data.role };
+}
+
+export async function register(username: string, password: string): Promise<string> {
+  const res = await fetch('/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+
+  if (!res.ok) {
+    throw new Error(await extract_error_message(res, 'Registration failed'));
+  }
+
+  const data = (await res.json()) as RegisterResponse;
+  return data.message;
+}
+
+export function logout(): void {
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+}
+
+async function try_refresh_tokens(): Promise<string | null> {
+  const refresh_token = localStorage.getItem(REFRESH_TOKEN_KEY);
+  if (!refresh_token) return null;
+
+  const res = await fetch('/refresh_token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token }),
+  });
+
+  if (!res.ok) {
+    logout();
+    set_current_user(null);
+    flick.redraw();
+    return null;
+  }
+
+  const data = (await res.json()) as TokenResponse;
+  localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
+  localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
+  set_current_user({ username: data.username, role: data.role });
+  return data.access_token;
+}
+
+export async function auth_fetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  let res = await fetch(input, { ...init, headers });
+  if (res.status === 401 && localStorage.getItem(REFRESH_TOKEN_KEY)) {
+    const new_token = await try_refresh_tokens();
+    if (new_token) {
+      headers.set('Authorization', `Bearer ${new_token}`);
+      res = await fetch(input, { ...init, headers });
+    }
+  }
+  return res;
+}
+
+const stored_token = localStorage.getItem(ACCESS_TOKEN_KEY);
+if (stored_token) {
+  set_current_user(parse_user_from_token(stored_token));
+}
 
 const landing_page = () => h('div.container.mt-5', [
   h('header.text-center.mb-5', [
@@ -47,24 +182,20 @@ function OBSERVISTAApp(): VNode {
       ]))
   ]);
 
-  return App(Navbar(OffcanvasBrand('OBSERVISTA'), [NavbarList([NavbarItem(h('i.fas.fa-home'), () => {
-    flick.ctx.current_page = landing_page;
-    flick.ctx.page_title = 'Home';
-    flick.redraw();
-  }, false, 'Home'),
-  ]), UserButton()]), content);
+  return App(
+    Navbar(
+      OffcanvasBrand('OBSERVISTA'),
+      [
+        NavbarList([
+          NavbarItem(h('i.fas.fa-home'), () => {
+            flick.ctx.current_page = landing_page;
+            flick.ctx.page_title = 'Home';
+            flick.redraw();
+          }, false, 'Home'),
+        ]),
+        UserButton(),
+      ]
+    ),
+    content
+  );
 }
-
-export async function login(username: string, password: string): Promise<void> {
-  const login_res = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
-  if (!login_res.ok) {
-    throw new Error(`Login failed: ${login_res.status} ${login_res.statusText}`.trim());
-  }
-  const data = await login_res.json() as Token;
-  if (!data.access_token || !data.refresh_token) {
-    throw new Error('Login failed: missing token in response');
-  }
-}
-
-type Token = { access_token: string, refresh_token: string, token_type: string };
-export type User = { username: string, role: 'User' | 'Admin' };
