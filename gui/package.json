@@ -10,13 +10,13 @@
   },
   "devDependencies": {
     "typescript": "~7.0.2",
-    "vite": "^8.3.5",
+    "vite": "^8.3.8",
     "@fortawesome/fontawesome-free": "^7.3.1",
     "@types/bootstrap": "^5.2.11"
   },
   "dependencies": {
     "@ratiosolver/flick": "^0.2.12",
-    "bootstrap": "^5.3.8",
+    "bootstrap": "^5.3.9",
     "snabbdom": "^3.6.4"
   }
 }

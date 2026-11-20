@@ -1,13 +1,27 @@
 use crate::ontology::{CreateTerrainVagueRequest, get_all_terrain_vagues, insert_terrain_vague};
-use axum::{Json, Router, extract::State, response::IntoResponse, routing::get, routing::post};
-use reqwest::StatusCode;
-use serde::Deserialize;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use axum::{
+    Json, Router,
+    extract::{Request, State},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use mongodb::{IndexModel, bson::doc, options::IndexOptions};
+use reqwest::{StatusCode, header::AUTHORIZATION};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::net::TcpListener;
 use tower_http::services::{ServeDir, ServeFile};
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 mod ontology;
+
+const ACCESS_TOKEN_TTL_SECS: u64 = 3600; // 1 hour
+const REFRESH_TOKEN_TTL_SECS: u64 = 60 * 60 * 24 * 7; // 7 days
 
 #[derive(Clone)]
 struct AppState {
@@ -16,6 +30,29 @@ struct AppState {
     fuseki_password: String,
     fuseki_client: reqwest::Client,
     db_client: mongodb::Client,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct UserDocument {
+    username: String,
+    password_hash: String,
+    created_at: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct Claims {
+    sub: String,
+    token_type: String,
+    exp: usize,
+    iat: usize,
+}
+
+#[derive(Serialize)]
+struct AuthResponse {
+    access_token: String,
+    refresh_token: String,
+    token_type: &'static str,
+    expires_in: u64,
 }
 
 #[tokio::main]
@@ -30,18 +67,80 @@ async fn main() {
         db_client: mongodb::Client::with_uri_str(&std::env::var("MONGODB_URI").unwrap_or_else(|_| "mongodb://localhost:27017".into())).await.unwrap(),
     };
 
+    ensure_user_indexes(&state.db_client).await;
     ontology::seed_ontology(&state.fuseki_client, &state.fuseki_url, &state.fuseki_password).await;
 
-    let api_router = Router::new().route("/api/terrain-vague", get(list_terrain_vagues).post(create_terrain_vague));
-    let auth_router = Router::new();
+    let api_router = Router::new().route("/api/terrain-vague", get(list_terrain_vagues));
+    let auth_router = Router::new().route("/api/terrain-vague", post(create_terrain_vague)).route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
     let unauth_router = Router::new().route("/register", post(register)).route("/login", post(login)).route("/refresh_token", post(refresh_token));
 
     let app = unauth_router.merge(auth_router).merge(api_router).with_state(state).route_service("/favicon.ico", ServeFile::new("gui/favicon.ico")).nest_service("/assets", ServeDir::new("gui/assets")).fallback_service(ServeDir::new("gui").not_found_service(ServeFile::new("gui/index.html")));
 
     let port = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(3000);
     info!("Starting OBSERVISTA server on port {}", port);
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await.unwrap();
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn ensure_user_indexes(db_client: &mongodb::Client) {
+    let users = db_client.database("observista").collection::<UserDocument>("users");
+    let index = IndexModel::builder().keys(doc! { "username": 1 }).options(IndexOptions::builder().unique(true).build()).build();
+
+    if let Err(err) = users.create_index(index).await {
+        error!("Failed to create unique index on users.username: {}", err);
+    }
+}
+
+fn current_timestamp() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+fn issue_token_pair(username: &str, secret: &str) -> Result<AuthResponse, StatusCode> {
+    let now = current_timestamp();
+    let encoding_key = EncodingKey::from_secret(secret.as_bytes()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let access_claims = Claims {
+        sub: username.to_owned(),
+        token_type: "access".to_owned(),
+        iat: now as usize,
+        exp: (now + ACCESS_TOKEN_TTL_SECS) as usize,
+    };
+
+    let refresh_claims = Claims {
+        sub: username.to_owned(),
+        token_type: "refresh".to_owned(),
+        iat: now as usize,
+        exp: (now + REFRESH_TOKEN_TTL_SECS) as usize,
+    };
+
+    let access_token = encode(&Header::default(), &access_claims, &encoding_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let refresh_token = encode(&Header::default(), &refresh_claims, &encoding_key).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(AuthResponse { access_token, refresh_token, token_type: "Bearer", expires_in: ACCESS_TOKEN_TTL_SECS })
+}
+
+fn verify_token(token: &str, secret: &str, expected_type: &str) -> Result<Claims, StatusCode> {
+    let decoding_key = DecodingKey::from_secret(secret.as_bytes()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let validation = Validation::default();
+
+    let token_data = decode::<Claims>(token, &decoding_key, &validation).map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    if token_data.claims.token_type != expected_type {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    Ok(token_data.claims)
+}
+
+async fn require_auth(State(state): State<AppState>, mut req: Request, next: Next) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let auth_header = req.headers().get(AUTHORIZATION).and_then(|h| h.to_str().ok()).ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({ "error": "Missing Authorization header" }))))?;
+
+    let token = auth_header.strip_prefix("Bearer ").ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({ "error": "Invalid Authorization scheme, expected Bearer" }))))?;
+
+    let claims = verify_token(token, &state.secret, "access").map_err(|_| (StatusCode::UNAUTHORIZED, Json(json!({ "error": "Invalid or expired access token" }))))?;
+
+    req.extensions_mut().insert(claims);
+    Ok(next.run(req).await)
 }
 
 async fn list_terrain_vagues(State(state): State<AppState>) -> impl IntoResponse {
@@ -70,13 +169,106 @@ struct Credentials {
     password: String,
 }
 
-async fn login(State(state): State<AppState>, Json(req): Json<Credentials>) -> impl IntoResponse {}
+async fn register(State(state): State<AppState>, Json(req): Json<Credentials>) -> impl IntoResponse {
+    let username = req.username.trim();
+    if username.len() < 3 || req.password.len() < 8 {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "Username must be >= 3 chars and password >= 8 chars" })));
+    }
 
-async fn register(State(state): State<AppState>, Json(req): Json<Credentials>) -> impl IntoResponse {}
+    let users = state.db_client.database("observista").collection::<UserDocument>("users");
+
+    match users.find_one(doc! { "username": username }).await {
+        Ok(Some(_)) => {
+            return (StatusCode::CONFLICT, Json(json!({ "error": "Username already exists" })));
+        }
+        Err(err) => {
+            error!("MongoDB error checking user: {}", err);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Database error" })));
+        }
+        Ok(None) => {}
+    }
+
+    let password_hash = match Argon2::default().hash_password(req.password.as_bytes()) {
+        Ok(hash) => hash.to_string(),
+        Err(err) => {
+            error!("Password hashing failed: {}", err);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Failed to process credentials" })));
+        }
+    };
+
+    let new_user = UserDocument { username: username.to_owned(), password_hash, created_at: current_timestamp() };
+
+    if let Err(err) = users.insert_one(new_user).await {
+        error!("Failed to insert user into MongoDB: {}", err);
+        return (StatusCode::CONFLICT, Json(json!({ "error": "Could not register user" })));
+    }
+
+    match issue_token_pair(username, &state.secret) {
+        Ok(tokens) => (StatusCode::CREATED, Json(json!(tokens))),
+        Err(status) => (status, Json(json!({ "error": "Failed to issue tokens" }))),
+    }
+}
+
+async fn login(State(state): State<AppState>, Json(req): Json<Credentials>) -> impl IntoResponse {
+    let username = req.username.trim();
+    let users = state.db_client.database("observista").collection::<UserDocument>("users");
+
+    let user = match users.find_one(doc! { "username": username }).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "Invalid username or password" })));
+        }
+        Err(err) => {
+            error!("MongoDB error during login: {}", err);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Database error" })));
+        }
+    };
+
+    let parsed_hash = match PasswordHash::new(&user.password_hash) {
+        Ok(h) => h,
+        Err(err) => {
+            error!("Corrupted password hash in DB for user {}: {}", username, err);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Authentication error" })));
+        }
+    };
+
+    if Argon2::default().verify_password(req.password.as_bytes(), &parsed_hash).is_err() {
+        return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "Invalid username or password" })));
+    }
+
+    match issue_token_pair(&user.username, &state.secret) {
+        Ok(tokens) => (StatusCode::OK, Json(json!(tokens))),
+        Err(status) => (status, Json(json!({ "error": "Failed to issue tokens" }))),
+    }
+}
 
 #[derive(Deserialize)]
 struct RefreshTokenRequest {
     refresh_token: String,
 }
 
-async fn refresh_token(State(state): State<AppState>, Json(req): Json<RefreshTokenRequest>) -> impl IntoResponse {}
+async fn refresh_token(State(state): State<AppState>, Json(req): Json<RefreshTokenRequest>) -> impl IntoResponse {
+    let claims = match verify_token(&req.refresh_token, &state.secret, "refresh") {
+        Ok(c) => c,
+        Err(_) => {
+            return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "Invalid or expired refresh token" })));
+        }
+    };
+
+    let users = state.db_client.database("observista").collection::<UserDocument>("users");
+    match users.find_one(doc! { "username": &claims.sub }).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "User no longer exists" })));
+        }
+        Err(err) => {
+            error!("MongoDB error during token refresh: {}", err);
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "Database error" })));
+        }
+    }
+
+    match issue_token_pair(&claims.sub, &state.secret) {
+        Ok(tokens) => (StatusCode::OK, Json(json!(tokens))),
+        Err(status) => (status, Json(json!({ "error": "Failed to issue tokens" }))),
+    }
+}
