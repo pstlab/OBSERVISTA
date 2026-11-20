@@ -3,7 +3,7 @@
 @prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
-@prefix dul:     <http://www.ontologydesignpatterns.org/ont/dul/DUL.owl#> .
+@prefix db:      <https://w3id.org/DOLCE/OWL/DOLCEbasic#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix geo:     <http://www.opengis.net/ont/geosparql#> .
 
@@ -13,12 +13,12 @@
 
 <http://observista.eu/ontology/>
     a owl:Ontology ;
-    rdfs:label "Observista Ontology"@en ;
-    rdfs:label "Ontologia Observista"@it ;
-    rdfs:comment "Domain ontology for Observista, grounded on DOLCE+DnS Ultralite (DUL)."@en ;
-    owl:versionInfo "0.1.0" ;
+    rdfs:label "Observista Ontology"@en ,
+               "Ontologia Observista"@it ;
+    rdfs:comment "Domain ontology for Observista, grounded on DOLCE-basic (ISO/IEC 21838-3)."@en ;
+    owl:versionInfo "0.2.0" ;
     dcterms:creator "Observista Team" ;
-    owl:imports <http://www.ontologydesignpatterns.org/ont/dul/DUL.owl> .
+    owl:imports <https://w3id.org/DOLCE/OWL/DOLCEbasic> .
 
 #################################################################
 # Classes
@@ -26,7 +26,7 @@
 
 :TerrainVague
     a owl:Class ;
-    rdfs:subClassOf dul:PhysicalPlace ,
+    rdfs:subClassOf db:PhysicalEndurant ,
                     geo:Feature ;
     rdfs:label "Terrain Vague"@en ,
                "Terrain Vague"@it ;
@@ -35,14 +35,13 @@
 
 :SiteTypology
     a owl:Class ;
-    rdfs:subClassOf dul:Concept ;
     rdfs:label "Site Typology"@en ,
                "Tipologia del Sito"@it ;
     rdfs:comment "Classification of the site based on its former function or spatial morphology (e.g., industrial, railway, infrastructure)."@en .
 
 :ConservationState
     a owl:Class ;
-    rdfs:subClassOf dul:Quality ;
+    rdfs:subClassOf db:PhysicalQuality ;
     rdfs:label "Conservation State"@en ,
                "Stato di Conservazione"@it .
 
@@ -52,7 +51,6 @@
 
 :hasTypology
     a owl:ObjectProperty ;
-    rdfs:subPropertyOf dul:isClassifiedBy ;
     rdfs:domain :TerrainVague ;
     rdfs:range :SiteTypology ;
     rdfs:label "has typology"@en ,
@@ -60,7 +58,7 @@
 
 :hasConservationState
     a owl:ObjectProperty ;
-    rdfs:subPropertyOf dul:hasQuality ;
+    rdfs:subPropertyOf [ owl:inverseOf db:directQualityOf ] ;
     rdfs:domain :TerrainVague ;
     rdfs:range :ConservationState ;
     rdfs:label "has conservation state"@en ,

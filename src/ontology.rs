@@ -6,6 +6,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 const ONTOLOGY_NS: &str = "http://observista.eu/ontology/";
+const DOLCE_BASIC_IRI: &str = "https://w3id.org/DOLCE/OWL/DOLCEbasic";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateTerrainVagueRequest {
@@ -39,6 +40,11 @@ struct SparqlResults {
 #[derive(Deserialize)]
 struct SparqlValue {
     value: String,
+}
+
+#[derive(Deserialize)]
+struct SparqlAskResponse {
+    boolean: bool,
 }
 
 fn escape_sparql_literal(input: &str) -> String {
@@ -76,14 +82,38 @@ pub async fn seed_ontology(http_client: &Client, fuseki_base_url: &str, fuseki_p
         error!("Could not read ontology/fuseki-config.ttl");
     }
 
-    if let Ok(ttl_content) = fs::read_to_string("ontology/observista.ttl").await {
-        let url = format!("{}/data?default", fuseki_base_url);
-        match http_client.post(&url).basic_auth("admin", Some(fuseki_password)).header("Content-Type", "text/turtle").body(ttl_content).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                info!("Ontology seeded into Fuseki default graph successfully");
+    let data_url = format!("{}/data?default", fuseki_base_url);
+    let sparql_url = format!("{}/sparql", fuseki_base_url);
+
+    let ask_dolce = format!("ASK {{ <{}> a <http://www.w3.org/2002/07/owl#Ontology> }}", DOLCE_BASIC_IRI);
+    let dolce_already_loaded = match http_client.post(&sparql_url).header("Accept", "application/sparql-results+json").form(&[("query", ask_dolce.as_str())]).send().await {
+        Ok(resp) if resp.status().is_success() => resp.json::<SparqlAskResponse>().await.map(|r| r.boolean).unwrap_or(false),
+        _ => false,
+    };
+
+    if !dolce_already_loaded {
+        if let Ok(dolce_xml) = fs::read_to_string("ontology/DOLCEbasic.owl").await {
+            match http_client.post(&data_url).basic_auth("admin", Some(fuseki_password)).header("Content-Type", "application/rdf+xml").body(dolce_xml).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    info!("DOLCEbasic.owl seeded into Fuseki default graph successfully");
+                }
+                Ok(resp) => warn!("Fuseki DOLCEbasic seed returned status: {}", resp.status()),
+                Err(e) => error!("Failed to seed DOLCEbasic.owl: {}", e),
             }
-            Ok(resp) => warn!("Fuseki seed returned status: {}", resp.status()),
-            Err(e) => error!("Failed to seed ontology: {}", e),
+        } else {
+            error!("Could not read ontology/DOLCEbasic.owl");
+        }
+    } else {
+        info!("DOLCEbasic.owl already present on Fuseki, skipping upload");
+    }
+
+    if let Ok(ttl_content) = fs::read_to_string("ontology/observista.ttl").await {
+        match http_client.post(&data_url).basic_auth("admin", Some(fuseki_password)).header("Content-Type", "text/turtle").body(ttl_content).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                info!("OBSERVISTA ontology seeded into Fuseki default graph successfully");
+            }
+            Ok(resp) => warn!("Fuseki OBSERVISTA seed returned status: {}", resp.status()),
+            Err(e) => error!("Failed to seed OBSERVISTA ontology: {}", e),
         }
     } else {
         error!("Could not read ontology/observista.ttl");

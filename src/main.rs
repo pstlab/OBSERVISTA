@@ -1,5 +1,4 @@
-mod ontology;
-
+use crate::ontology::{CreateTerrainVagueRequest, get_all_terrain_vagues, insert_terrain_vague};
 use axum::{Json, Router, extract::State, response::IntoResponse, routing::get, routing::post};
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -8,7 +7,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::ontology::{CreateTerrainVagueRequest, get_all_terrain_vagues, insert_terrain_vague};
+mod ontology;
 
 #[derive(Clone)]
 struct AppState {
