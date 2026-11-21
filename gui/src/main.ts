@@ -4,6 +4,8 @@ import './style.css';
 import { h, type VNode } from 'snabbdom';
 import { UserButton, get_current_user, set_current_user } from './components/user';
 import { admin_users_page, load_users } from './components/admin';
+import { OffcanvasHeader } from '@ratiosolver/flick';
+import { map_page, load_terrain_vagues, MapOffcanvasBody, MapOffcanvasHeader } from './components/map';
 
 const ACCESS_TOKEN_KEY = 'observista_access_token';
 const REFRESH_TOKEN_KEY = 'observista_refresh_token';
@@ -181,6 +183,7 @@ flick.mount(() => OBSERVISTAApp());
 
 function OBSERVISTAApp(): VNode {
   const is_admin = get_current_user()?.get_role() === 'Admin';
+  const is_map = flick.ctx.current_page === map_page;
 
   const nav_items = [
     NavbarItem(
@@ -192,6 +195,17 @@ function OBSERVISTAApp(): VNode {
       },
       flick.ctx.current_page === landing_page,
       'Home'
+    ),
+    NavbarItem(
+      h('i.fas.fa-map-marked-alt'),
+      () => {
+        flick.ctx.current_page = map_page;
+        flick.ctx.page_title = 'Map';
+        void load_terrain_vagues(true);
+        flick.redraw();
+      },
+      is_map,
+      'Map'
     ),
     ...(is_admin
       ? [
@@ -212,7 +226,9 @@ function OBSERVISTAApp(): VNode {
 
   const content = h('div.flex-grow-1.d-flex.flex-column', [
     (flick.ctx.current_page as () => VNode)(),
-    Offcanvas(OffcanvasBody([])),
+    is_map
+      ? Offcanvas(MapOffcanvasBody(), MapOffcanvasHeader())
+      : Offcanvas(OffcanvasBody([]), OffcanvasHeader('OBSERVISTA')),
   ]);
 
   return App(
