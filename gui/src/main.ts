@@ -2,7 +2,8 @@ import '@fortawesome/fontawesome-free/css/all.css';
 import { App, flick, Navbar, NavbarItem, NavbarList, Offcanvas, OffcanvasBody, OffcanvasBrand } from '@ratiosolver/flick';
 import './style.css';
 import { h, type VNode } from 'snabbdom';
-import { UserButton, set_current_user } from './components/user';
+import { UserButton, get_current_user, set_current_user } from './components/user';
+import { admin_users_page, load_users } from './components/admin';
 
 const ACCESS_TOKEN_KEY = 'observista_access_token';
 const REFRESH_TOKEN_KEY = 'observista_refresh_token';
@@ -33,7 +34,7 @@ function parse_user_from_token(token: string): User | null {
       return { username: payload.sub, role: payload.role };
     }
   } catch {
-    console.error('Failed to parse user from token');
+    // Token malformato
   }
   return null;
 }
@@ -45,7 +46,7 @@ async function extract_error_message(res: Response, fallback: string): Promise<s
       return data.error;
     }
   } catch {
-    console.error('Failed to extract error message from response');
+    // Risposta non JSON
   }
   return `${fallback} (${res.status})`;
 }
@@ -90,6 +91,10 @@ export async function register(username: string, password: string): Promise<stri
 export function logout(): void {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
+  if (flick.ctx.current_page === admin_users_page) {
+    flick.ctx.current_page = landing_page;
+    flick.ctx.page_title = 'Home';
+  }
 }
 
 async function try_refresh_tokens(): Promise<string | null> {
@@ -175,27 +180,46 @@ flick.ctx.page_title = 'Home';
 flick.mount(() => OBSERVISTAApp());
 
 function OBSERVISTAApp(): VNode {
+  const is_admin = get_current_user()?.get_role() === 'Admin';
+
+  const nav_items = [
+    NavbarItem(
+      h('i.fas.fa-home'),
+      () => {
+        flick.ctx.current_page = landing_page;
+        flick.ctx.page_title = 'Home';
+        flick.redraw();
+      },
+      flick.ctx.current_page === landing_page,
+      'Home'
+    ),
+    ...(is_admin
+      ? [
+        NavbarItem(
+          h('i.fas.fa-users-cog'),
+          () => {
+            flick.ctx.current_page = admin_users_page;
+            flick.ctx.page_title = 'Users';
+            void load_users();
+            flick.redraw();
+          },
+          flick.ctx.current_page === admin_users_page,
+          'Users'
+        ),
+      ]
+      : []),
+  ];
+
   const content = h('div.flex-grow-1.d-flex.flex-column', [
     (flick.ctx.current_page as () => VNode)(),
-    Offcanvas(
-      OffcanvasBody([
-      ]))
+    Offcanvas(OffcanvasBody([])),
   ]);
 
   return App(
-    Navbar(
-      OffcanvasBrand('OBSERVISTA'),
-      [
-        NavbarList([
-          NavbarItem(h('i.fas.fa-home'), () => {
-            flick.ctx.current_page = landing_page;
-            flick.ctx.page_title = 'Home';
-            flick.redraw();
-          }, false, 'Home'),
-        ]),
-        UserButton(),
-      ]
-    ),
+    Navbar(OffcanvasBrand('OBSERVISTA'), [
+      NavbarList(nav_items),
+      UserButton(),
+    ]),
     content
   );
 }
